@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.vineflower:vineflower:1.11.1'
+    implementation 'org.benf:cfr:0.152'
+    implementation 'org.ow2.asm:asm:9.6'
+    implementation 'org.ow2.asm:asm-tree:9.6'
+    implementation 'org.ow2.asm:asm-util:9.6'
+    implementation 'org.ow2.asm:asm-commons:9.6'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+    implementation "com.formdev:flatlaf:3.4.1"
+    implementation "com.formdev:flatlaf-extras:3.4.1"
+}
+
+application {
+    mainClass = 'com.reverse.App'
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'com.reverse.App'
+    }
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+kotlin {
+    jvmToolchain(21)
+}
