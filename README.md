@@ -11,7 +11,7 @@ A New Decompiler Whit A Nice Gui Will Be Updated And It will Having More Feature
         Procyon (Not Added Yet)
 
 # How to Install
-- Just Download the lastest Snapshot And Do java -jar jdec.jar or just double click it
+- Just Download the lastest Release And Do java -jar jdec.jar or just double click it
 
 # Gui And Decompilers ETC
 
