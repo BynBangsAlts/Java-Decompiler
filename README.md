@@ -1,17 +1,17 @@
 # JDec
 <img width="1920" height="1031" alt="image" src="https://github.com/user-attachments/assets/dbb98d9f-0991-4385-80dc-b77c586ce642" />
 
-A New Decompiler Whit A Nice Gui Will Be Updated And It will Having More Features
+Just Decompiler Whit Stuff
 
 # Decompilers
-- Some Stuff Arent Added YET but they will be added
+- Some Stuff Arent Added YET but they will be added Soon
         Fallback (Not Added Yet)
         CFR 
         VineFlower
-        Procyon (Not Added Yet)
+        Procyon
 
 # How to Install
-- Just Download the lastest Release And Do java -jar jdec.jar or just double click it
+- Just Download the lastest Release And Open Write this command in Cmd "java -jar jdec.jar" or just double click it
 
 # Gui And Decompilers ETC
 
