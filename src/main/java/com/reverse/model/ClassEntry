@@ -1,5 +1,0 @@
-package com.reverse.model;
-
-public record ClassEntry(String classPath, String simpleName) {
-    @Override public String toString() { return simpleName; }
-}
