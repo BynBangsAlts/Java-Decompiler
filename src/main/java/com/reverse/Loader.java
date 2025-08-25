@@ -9,7 +9,12 @@ import java.util.Map;
 import java.util.jar.*;
 import java.util.zip.ZipEntry;
 
-public class Loader {
+/**
+ * Loader: builds the tree view and exports JARs.
+ * - Shows ALL files (not only .class).
+ */
+public class Loader { //The Save All Is Broken ILL fix it ALSO LATER
+
 
     public DefaultMutableTreeNode buildTree(File jar) throws IOException {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode(jar.getName());
@@ -17,48 +22,54 @@ public class Loader {
             Enumeration<JarEntry> en = jf.entries();
             while (en.hasMoreElements()) {
                 JarEntry e = en.nextElement();
-                if (e.getName().endsWith(".class")) add(root, e.getName());
+                add(root, e.getName(), e.isDirectory());
             }
         }
         return root;
     }
 
-    private void add(DefaultMutableTreeNode root, String classPath) {
-        String[] parts = classPath.split("/");
+    private void add(DefaultMutableTreeNode root, String path, boolean dir) {
+        String[] parts = path.split("/");
         DefaultMutableTreeNode cur = root;
         for (int i = 0; i < parts.length; i++) {
             String p = parts[i];
-            boolean leaf = i == parts.length - 1;
-            String key = leaf ? p.substring(0, p.length() - 6) : p;
+            boolean leaf = (i == parts.length - 1);
 
             DefaultMutableTreeNode found = null;
             for (int j = 0; j < cur.getChildCount(); j++) {
                 DefaultMutableTreeNode ch = (DefaultMutableTreeNode) cur.getChildAt(j);
-                if (ch.getUserObject().toString().equals(key)) { found = ch; break; }
+                if (ch.getUserObject().toString().equals(p)) {
+                    found = ch;
+                    break;
+                }
             }
+
             if (found == null) {
-                found = new DefaultMutableTreeNode(leaf ? new ClassEntry(classPath, key) : key);
+                Object uo;
+                if (leaf && path.endsWith(".class")) {
+                    uo = new ClassEntry(path, p, false, false, false);
+                } else {
+                    uo = p;
+                }
+                found = new DefaultMutableTreeNode(uo);
                 cur.add(found);
             }
             cur = found;
         }
     }
 
-    public void exportJar(File baseJar, File out, Map<String,String> modified) throws IOException {
-        try (JarFile jf = new JarFile(baseJar); JarOutputStream jos = new JarOutputStream(new FileOutputStream(out))) {
+
+    public void exportJar(File baseJar, File out, Map<String, byte[]> edits) throws IOException {
+        try (JarFile jf = new JarFile(baseJar);
+             JarOutputStream jos = new JarOutputStream(new FileOutputStream(out))) {
+
             Enumeration<JarEntry> en = jf.entries();
             while (en.hasMoreElements()) {
                 JarEntry e = en.nextElement();
-                if (e.getName().endsWith(".class") && modified.containsKey(e.getName())) continue;
                 jos.putNextEntry(new ZipEntry(e.getName()));
-                try (InputStream is = jf.getInputStream(e)) { is.transferTo(jos); }
-                jos.closeEntry();
-            }
-            for (var kv : modified.entrySet()) {
-                String classPath = kv.getKey();
-                String srcName = classPath.replace(".class", ".java");
-                jos.putNextEntry(new ZipEntry(srcName));
-                jos.write(kv.getValue().getBytes());
+                try (InputStream is = jf.getInputStream(e)) {
+                    is.transferTo(jos);
+                }
                 jos.closeEntry();
             }
         }
