@@ -1,4 +1,4 @@
-package com.reverse.gui;
+package com.reverse.ui;
 
 import com.reverse.decompile.Decompilers.Type;
 
@@ -10,59 +10,73 @@ import java.util.regex.Pattern;
 public final class SyntaxHighlighter {
     private SyntaxHighlighter() {}
 
+    // --- Creds to GPT For the List ---
+    private static final Color ORANGE = new Color(204, 120, 50);   // ASM instructions, descriptors, labels, etc.
+    private static final Color GRAY   = new Color(128, 128, 128);  // comments & default
+    private static final Color KW    = new Color(204, 120, 50);   // orange
+    private static final Color TYPE  = new Color(104, 151, 187);  // blue
+    private static final Color STR   = new Color(152, 118, 170);  // purple
+    private static final Color NUM   = new Color(98, 151, 85);    // green
+    private static final Color ANN   = new Color(200, 200, 50);   // yellow
+    private static final Color CMT   = new Color(128, 128, 128);  // gray
+    private static final Pattern J_KEY = Pattern.compile("\\b(abstract|assert|boolean|break|byte|case|catch|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|goto|if|implements|import|instanceof|int|interface|long|native|new|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while)\\b");
+    private static final Pattern J_BOOL_NULL = Pattern.compile("\\b(true|false|null)\\b");
+    private static final Pattern J_STR = Pattern.compile("\"([^\"\\\\]|\\\\.)*\"|'([^'\\\\]|\\\\.)*'");
+    private static final Pattern J_NUM = Pattern.compile("\\b(0[xX][0-9a-fA-F_]+|0[bB][01_]+|\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d[\\d_]*)?)[fFdDlL]?\\b");
+    private static final Pattern J_ANN = Pattern.compile("@[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*");
+    private static final Pattern J_CMT = Pattern.compile("//[^\\n]*|/\\*[\\s\\S]*?\\*/");
+    private static final Pattern J_TYPE = Pattern.compile("\\b(?:[A-Z][A-Za-z0-9_]*\\.)*[A-Z][A-Za-z0-9_]*\\b");
+    private static final Pattern A_ANY  = Pattern.compile("\\S+");     // everything non-space → orange
+    private static final Pattern A_LBL  = Pattern.compile("L\\d+:");   // labels → orange
+    private static final Pattern A_CMT  = Pattern.compile(";.*$", Pattern.MULTILINE); // comments → gray
 
-    private static final Color KW = new Color(35, 92, 173);
-    private static final Color STR = new Color(163, 110, 38);
-    private static final Color NUM = new Color(28, 130, 62);
-    private static final Color ANN = new Color(122, 61, 158);
-    private static final Color CMT = new Color(120, 120, 120);
+    public static void apply(StyledDocument doc, Type t) { applyJava(doc); }
 
-    private static final Pattern J_KEY = Pattern.compile("\\b(abstract|assert|boolean|break|byte|case|catch|char|class|continue|default|do|double|else|enum|extends|final|finally|float|for|if|implements|import|instanceof|int|interface|long|native|new|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while)\\b");
-    private static final Pattern J_STR = Pattern.compile("\"([^\"\\\\]|\\\\.)*\"");
-    private static final Pattern J_NUM = Pattern.compile("\\b\\d+(?:_\\d+)*(?:\\.\\d+)?[dDfFlL]?\\b");
-    private static final Pattern J_ANN = Pattern.compile("@[A-Za-z_][A-Za-z0-9_]*");
-    private static final Pattern J_CMT = Pattern.compile("//[^\\n]*|/\\*.*?\\*/", Pattern.DOTALL);
-
-    private static final Pattern A_OP = Pattern.compile("\\b(ILOAD|ISTORE|ALOAD|ASTORE|FLOAD|FSTORE|DLOAD|DSTORE|LLOAD|LSTORE|ICONST|FCONST|DCONST|LCONST|ACONST|BIPUSH|SIPUSH|LDC|IADD|ISUB|IMUL|IDIV|IREM|FADD|FSUB|FMUL|FDIV|FREM|DADD|DSUB|DMUL|DDIV|DREM|LADD|LSUB|LMUL|LDIV|LREM|INEG|FNEG|DNEG|LNEG|ISHL|ISHR|IUSHR|LSHL|LSHR|LUSHR|IAND|IOR|IXOR|LAND|LOR|LXOR|IINC|I2L|I2F|I2D|L2I|L2F|L2D|F2I|F2L|F2D|D2I|D2L|D2F|I2B|I2C|I2S|LCMP|FCMPL|FCMPG|DCMPL|DCMPG|IFEQ|IFNE|IFLT|IFGE|IFGT|IFLE|IF_ICMPEQ|IF_ICMPNE|IF_ICMPLT|IF_ICMPGE|IF_ICMPGT|IF_ICMPLE|IF_ACMPEQ|IF_ACMPNE|GOTO|JSR|RET|TABLESWITCH|LOOKUPSWITCH|IRETURN|LRETURN|FRETURN|DRETURN|ARETURN|RETURN|GETSTATIC|PUTSTATIC|GETFIELD|PUTFIELD|INVOKEVIRTUAL|INVOKESPECIAL|INVOKESTATIC|INVOKEINTERFACE|INVOKEDYNAMIC|NEW|NEWARRAY|ANEWARRAY|ARRAYLENGTH|ATHROW|CHECKCAST|INSTANCEOF|MONITORENTER|MONITOREXIT|IFNULL|IFNONNULL|MULTIANEWARRAY|NOP|ACONST_NULL|ICONST_M1|ICONST_0|ICONST_1|ICONST_2|ICONST_3|ICONST_4|ICONST_5|LCONST_0|LCONST_1|FCONST_0|FCONST_1|FCONST_2|DCONST_0|DCONST_1|IALOAD|LALOAD|FALOAD|DALOAD|AALOAD|BALOAD|CALOAD|SALOAD|IASTORE|LASTORE|FASTORE|DASTORE|AASTORE|BASTORE|CASTORE|SASTORE|WIDE|BREAKPOINT|IMPDEP1|IMPDEP2)\\b");
-    private static final Pattern A_LBL = Pattern.compile("\\b[A-Z_][A-Z0-9_]*:");
-    private static final Pattern A_TYP = Pattern.compile("\\b[BCDFIJSZ]|\\bL[^;]+;");
-    private static final Pattern A_NUM = Pattern.compile("\\b-?\\d+\\b");
-    private static final Pattern A_CMT = Pattern.compile("//.*");
-
-    public static void apply(StyledDocument doc, Type t) {
-        try {
-            String text = doc.getText(0, doc.getLength());
-            clear(doc);
-            if (t == Type.ASM) {
-                paint(doc, A_OP, KW);
-                paint(doc, A_LBL, ANN);
-                paint(doc, A_TYP, NUM);
-                paint(doc, A_NUM, STR);
-                paint(doc, A_CMT, CMT);
-            } else {
-                paint(doc, J_KEY, KW);
-                paint(doc, J_STR, STR);
-                paint(doc, J_NUM, NUM);
-                paint(doc, J_ANN, ANN);
-                paint(doc, J_CMT, CMT);
-            }
-        } catch (BadLocationException ignored) {}
+    /** Java highlighting */
+    public static void applyJava(StyledDocument doc) {
+        clear(doc);
+        paint(doc, J_KEY, KW);
+        paint(doc, J_BOOL_NULL, NUM);
+        paint(doc, J_STR, STR);
+        paint(doc, J_NUM, NUM);
+        paint(doc, J_ANN, ANN);
+        paint(doc, J_CMT, CMT, Font.ITALIC);
+        paint(doc, J_TYPE, TYPE);
     }
 
+    public static void applyAsm(StyledDocument doc) {
+        clear(doc);
+        Style gray = doc.addStyle("asm-default", null);
+        StyleConstants.setForeground(gray, GRAY);
+        doc.setCharacterAttributes(0, doc.getLength(), gray, true);
+        paint(doc, A_ANY, ORANGE, Font.PLAIN);
+        paint(doc, A_LBL, ORANGE, Font.BOLD);
+        paint(doc, A_CMT, GRAY, Font.ITALIC);
+    }
+
+    /* --- helpers --- */
     private static void clear(StyledDocument doc) {
         var def = new SimpleAttributeSet();
         doc.setCharacterAttributes(0, doc.getLength(), def, true);
     }
 
     private static void paint(StyledDocument doc, Pattern p, Color c) {
-        Style s = doc.getStyle(c.toString());
+        paint(doc, p, c, Font.PLAIN);
+    }
+
+    private static void paint(StyledDocument doc, Pattern p, Color c, int style) {
+        Style s = doc.getStyle(c.toString() + style);
         if (s == null) {
-            s = doc.addStyle(c.toString(), null);
+            s = doc.addStyle(c.toString() + style, null);
             StyleConstants.setForeground(s, c);
+            StyleConstants.setItalic(s, (style & Font.ITALIC) != 0);
+            StyleConstants.setBold(s, (style & Font.BOLD) != 0);
         }
         try {
             Matcher m = p.matcher(doc.getText(0, doc.getLength()));
-            while (m.find()) doc.setCharacterAttributes(m.start(), m.end()-m.start(), s, false);
+            while (m.find()) {
+                doc.setCharacterAttributes(m.start(), m.end() - m.start(), s, false);
+            }
         } catch (BadLocationException ignored) {}
     }
 }
