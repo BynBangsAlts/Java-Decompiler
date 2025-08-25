@@ -1,9 +1,9 @@
-package com.reverse.gui;
+package com.reverse.ui;
 
-import com.reverse.model.ClassEntry;
-import com.reverse.decompile.Decompilers;
+import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import com.reverse.Loader;
-import com.reverse.settings.Settings;
+import com.reverse.decompile.Decompilers;
+import com.reverse.model.ClassEntry;
 import com.reverse.settings.Settings;
 import com.reverse.settings.Theme;
 
@@ -13,185 +13,149 @@ import javax.swing.border.TitledBorder;
 import javax.swing.event.TreeSelectionEvent;
 import javax.swing.text.DefaultStyledDocument;
 import javax.swing.text.StyledDocument;
-import javax.swing.tree.DefaultMutableTreeNode;
-import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.*;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.dnd.*;
 import java.io.File;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
+/**
+ * DecompilerFrame
+ * - Shows classes/resources
+ */
 public class DecompilerFrame extends JFrame {
 
+    /* ---------- Workspace / UI ---------- */
     private final JTree tree;
     private final DefaultTreeModel model;
-    private final JTextPane code;
-    private final JScrollPane codeScroll;
-    private final JComboBox<Decompilers.Type> picker;
-    private final JLabel status;
-    private JTextField search; // not final (fixes “cannot assign to final”)
-
-    private LineNumberGutter gutter;
+    private final JTabbedPane editorTabs;
+    private final JComboBox<Decompilers.Type> decompPicker;
+    private final JTextField search;
+    private final JLabel status = new JLabel("Drop a JAR or click Open — I’ll decompile it for you ✨");
 
     private File jar;
-    private final Map<String,String> edits = new ConcurrentHashMap<>();
-    private ClassEntry current;
+    // bytes to replace in export: entryName -> bytes
+    private final Map<String, byte[]> modifiedBytes = new ConcurrentHashMap<>();
+    // open editors for .class entries only (key = classPath). Resource tabs tracked separately.
+    private final Map<String, EditorTab> openClassEditors = new HashMap<>();
+    // open editors for resources: entryName -> ResourceTab
+    private final Map<String, ResourceTab> openResourceEditors = new HashMap<>();
+    // record jar entry renames (old -> new)
+    private final Map<String, String> renames = new HashMap<>();
 
     public DecompilerFrame() {
         super("JDec");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
-        setSize(1080, 740);
+        setSize(1280, 840);
         setLocationRelativeTo(null);
 
-        JPanel left = new JPanel(new BorderLayout());
-        left.setBorder(new TitledBorder("Classes"));
+        try { FlatMacDarkLaf.setup(); } catch (Exception ignored) {}
+
         model = new DefaultTreeModel(new DefaultMutableTreeNode("Drop a JAR"));
         tree = new JTree(model);
-        tree.setRowHeight(22);
+        tree.setRowHeight(21);
+        tree.setCellRenderer(new DefaultTreeCellRenderer()); // customize later if you want icons
         tree.addTreeSelectionListener(this::onPick);
-        var leftScroll = new JScrollPane(tree);
-        leftScroll.setBorder(new EmptyBorder(0,0,0,0));
-        left.add(leftScroll, BorderLayout.CENTER);
+        attachTreePopup();
 
+        JScrollPane treeScroll = new JScrollPane(tree);
+        JPanel left = new JPanel(new BorderLayout());
+        left.setBorder(new TitledBorder("Workspace"));
+        left.add(treeScroll, BorderLayout.CENTER);
+
+        editorTabs = new JTabbedPane();
         JPanel right = new JPanel(new BorderLayout());
-        right.setBorder(new TitledBorder("Code"));
+        right.setBorder(new TitledBorder("Editors"));
+        right.add(editorTabs, BorderLayout.CENTER);
 
-        StyledDocument doc = new DefaultStyledDocument();
-        code = new JTextPane();
-        code.setDocument(doc);
-        applyEditorLook();
+        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
+        mainSplit.setDividerLocation(320);
 
-        codeScroll = new JScrollPane(code);
-        codeScroll.setBorder(new EmptyBorder(0,0,0,0));
-        gutter = Theme.showLineNumbers() ? new LineNumberGutter(code) : null;
-        codeScroll.setRowHeaderView(gutter);
+        JToolBar top = new JToolBar();
+        top.setFloatable(false);
+        top.setBorder(new EmptyBorder(8,8,8,8));
 
-        right.add(toolbar(), BorderLayout.NORTH);
-        right.add(codeScroll, BorderLayout.CENTER);
-        right.add(editorFooter(), BorderLayout.SOUTH);
-
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(320);
-        split.setBorder(new EmptyBorder(0,0,0,0));
-
-        picker = new JComboBox<>(Decompilers.Type.values());
-        picker.addActionListener(e -> refresh());
-        status = new JLabel("Let’s work.");
-        status.setBorder(new EmptyBorder(0,8,0,8));
-
-        JPanel bottom = new JPanel(new BorderLayout());
-        bottom.setBorder(new EmptyBorder(10,10,10,10));
-        var rightBox = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        rightBox.add(new JLabel("Decompiler:"));
-        rightBox.add(picker);
-        bottom.add(status, BorderLayout.WEST);
-        bottom.add(rightBox, BorderLayout.EAST);
-
-        setJMenuBar(menu());
-        setLayout(new BorderLayout());
-        add(split, BorderLayout.CENTER);
-        add(bottom, BorderLayout.SOUTH);
-
-        enableDnD();
-        setupShortcuts();
-    }
-
-    private void applyEditorLook() {
-        code.setFont(new Font(Theme.editorFont(), Font.PLAIN, Theme.editorSize()));
-        code.putClientProperty("JTextPane.placeholderText", "Open a class to view code");
-        code.setMargin(Theme.zenMode() ? new Insets(16,16,16,16) : new Insets(8,8,8,8));
-    }
-
-    private JToolBar toolbar() {
-        JToolBar tb = new JToolBar();
-        tb.setFloatable(false);
-        tb.setBorder(new EmptyBorder(10,10,10,10));
-
-        JButton open = button("Open", e -> openJar());
-        JButton save = button("Save", e -> saveCurrent());
-        JButton export = button("Export", e -> exportJar());
+        JButton openBtn   = button("Open", e -> openJar());
+        JButton saveBtn   = button("Save All", e -> saveAll());
+        JButton exportBtn = button("Export", e -> exportJar());
         JButton settingsBtn = button("Settings", e -> {
             new Settings(this).setVisible(true);
-            applyEditorLook();
-            if (Theme.showLineNumbers()) {
-                if (gutter == null) gutter = new LineNumberGutter(code);
-                codeScroll.setRowHeaderView(gutter);
-            } else {
-                codeScroll.setRowHeaderView(null);
-                gutter = null;
+            SwingUtilities.updateComponentTreeUI(this);
+        });
+
+        decompPicker = new JComboBox<>(Decompilers.Type.values());
+        decompPicker.addActionListener(e -> refreshActive());
+
+        search = new JTextField(24);
+        search.putClientProperty("JTextField.placeholderText", "Search in active editor");
+        search.addActionListener(e -> {
+            var et = getActiveSearchable();
+            if (et == null) return;
+            int hits = et.highlightSearch(search.getText());
+            status.setText(hits == 0 ? "No matches" : hits + " match(es)");
+        });
+
+        top.add(openBtn); top.add(saveBtn); top.add(exportBtn);
+        top.addSeparator();
+        top.add(settingsBtn);
+        top.addSeparator();
+        top.add(new JLabel(""));
+        top.add(decompPicker);
+        top.add(Box.createHorizontalStrut(16));
+        top.add(new JLabel(""));
+        top.add(search);
+
+        /* --- Status bar --- */
+        status.setBorder(new EmptyBorder(6,8,6,8));
+        JPanel statusBar = new JPanel(new BorderLayout());
+        statusBar.add(status, BorderLayout.WEST);
+
+        /* --- Workspace tab --- */
+        JPanel workspace = new JPanel(new BorderLayout());
+        workspace.add(top, BorderLayout.NORTH);
+        workspace.add(mainSplit, BorderLayout.CENTER);
+        workspace.add(statusBar, BorderLayout.SOUTH);
+
+        /* --- Main tabs (only one for now) --- */
+        JTabbedPane mainTabs = new JTabbedPane();
+        mainTabs.addTab("Workspace", workspace);
+        setJMenuBar(menuBar());
+        add(mainTabs, BorderLayout.CENTER);
+
+        enableDnD();
+
+        // Ctrl+F
+        var im = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        var am = getRootPane().getActionMap();
+        im.put(KeyStroke.getKeyStroke("control F"), "find");
+        am.put("find", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                search.requestFocusInWindow(); search.selectAll();
             }
         });
-
-        search = new JTextField(20);
-        search.putClientProperty("JTextField.placeholderText", "Search in file");
-        search.addActionListener(e -> {
-            int hits = SearchHighlighter.highlight(code, search.getText());
-            status.setText(hits == 0 ? "No matches" : hits + " matches");
-        });
-
-        tb.add(open); tb.add(save); tb.add(export);
-        tb.addSeparator();
-        tb.add(settingsBtn);
-        tb.add(Box.createHorizontalStrut(12));
-        tb.add(search);
-        return tb;
     }
 
-    private JPanel editorFooter() {
-        var bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
-        var tip = new JLabel("Tip: Ctrl+F to find, Ctrl+S to save. You’ve got this.");
-        tip.setForeground(UIManager.getColor("Label.disabledForeground"));
-        bar.add(tip);
-        return bar;
-    }
-
-    private JButton button(String text, java.awt.event.ActionListener a) {
-        JButton b = new JButton(text);
-        b.addActionListener(a);
-        b.putClientProperty("JButton.buttonType", "roundRect");
-        return b;
-    }
-
-    private JMenuBar menu() {
+    private JMenuBar menuBar() {
         JMenuBar mb = new JMenuBar();
         JMenu file = new JMenu("File");
-        JMenu view = new JMenu("View");
+        JMenuItem open = new JMenuItem("Open JAR");
+        JMenuItem saveAll = new JMenuItem("Save All");
+        JMenuItem export = new JMenuItem("Export");
 
-        var open = new JMenuItem("Open JAR"); open.addActionListener(e -> openJar());
-        var saveAll = new JMenuItem("Save All"); saveAll.addActionListener(e -> { saveCurrent(); status.setText("Saved " + edits.size() + " classes"); });
-        var exp = new JMenuItem("Export JAR"); exp.addActionListener(e -> exportJar());
-        var quit = new JMenuItem("Exit"); quit.addActionListener(e -> System.exit(0));
+        open.addActionListener(e -> openJar());
+        saveAll.addActionListener(e -> saveAll());
+        export.addActionListener(e -> exportJar());
 
-        var settings = new JMenuItem("Settings…");
-        settings.addActionListener(e -> {
-            new Settings(this).setVisible(true);
-            applyEditorLook();
-            if (Theme.showLineNumbers()) {
-                if (gutter == null) gutter = new LineNumberGutter(code);
-                codeScroll.setRowHeaderView(gutter);
-            } else {
-                codeScroll.setRowHeaderView(null);
-                gutter = null;
-            }
-        });
-
-        file.add(open); file.add(saveAll); file.add(exp); file.addSeparator(); file.add(quit);
-        view.add(settings);
-        mb.add(file); mb.add(view);
+        file.add(open); file.add(saveAll); file.add(export);
+        mb.add(file);
         return mb;
-    }
-
-    private void setupShortcuts() {
-        var im = code.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-        var am = code.getActionMap();
-
-        im.put(KeyStroke.getKeyStroke("control S"), "save");
-        am.put("save", new AbstractAction() { public void actionPerformed(java.awt.event.ActionEvent e) { saveCurrent(); } });
-
-        im.put(KeyStroke.getKeyStroke("control F"), "focusFind");
-        am.put("focusFind", new AbstractAction() { public void actionPerformed(java.awt.event.ActionEvent e) { search.requestFocusInWindow(); search.selectAll(); } });
     }
 
     private void enableDnD() {
@@ -200,14 +164,8 @@ public class DecompilerFrame extends JFrame {
                 try {
                     e.acceptDrop(DnDConstants.ACTION_COPY);
                     List<?> files = (List<?>) e.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
-                    if (!files.isEmpty()) {
-                        File f = (File) files.get(0);
-                        if (f.getName().toLowerCase().endsWith(".jar")) loadJar(f);
-                        else JOptionPane.showMessageDialog(DecompilerFrame.this, "Drop a .jar file");
-                    }
-                    e.dropComplete(true);
+                    if (!files.isEmpty()) loadJar((File) files.get(0));
                 } catch (Exception ex) {
-                    e.dropComplete(false);
                     JOptionPane.showMessageDialog(DecompilerFrame.this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
@@ -226,65 +184,109 @@ public class DecompilerFrame extends JFrame {
     private void loadJar(File f) {
         try {
             this.jar = f;
-            this.edits.clear();
-            DefaultMutableTreeNode root = new Loader().buildTree(f);
+
+            // Close everything from previous jar
+            modifiedBytes.clear();
+            renames.clear();
+            openClassEditors.clear();
+            openResourceEditors.clear();
+            editorTabs.removeAll();
+
+            DefaultMutableTreeNode root = new Loader().buildTree(f); // shows all entries
             model.setRoot(root);
-            for (int i=0;i<tree.getRowCount();i++) tree.expandRow(i);
+            expandAll(tree);
+
             status.setText("Loaded: " + f.getName());
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private void onPick(TreeSelectionEvent e) {
-        var node = (DefaultMutableTreeNode) e.getPath().getLastPathComponent();
-        var obj = node.getUserObject();
-        if (obj instanceof ClassEntry ce) { current = ce; refresh(); }
+    private static void expandAll(JTree tree) {
+        for (int i=0;i<tree.getRowCount();i++) tree.expandRow(i);
     }
 
-    private void refresh() {
-        if (current == null || jar == null) return;
-        var type = (Decompilers.Type) picker.getSelectedItem();
-        String key = current.classPath();
-        if (edits.containsKey(key)) {
-            setCode(edits.get(key), type);
-            status.setText("Edited: " + current.simpleName());
+    private void onPick(TreeSelectionEvent e) {
+        DefaultMutableTreeNode node = (DefaultMutableTreeNode) e.getPath().getLastPathComponent();
+        Object uo = node.getUserObject();
+
+        if (uo instanceof ClassEntry ce) {
+            openClassEditor(ce);
             return;
         }
-        setCode("// Decompiling " + current.simpleName() + " via " + type + "...", type);
-        new SwingWorker<String,Void>() {
-            @Override protected String doInBackground() {
-                try { return new Decompilers(jar).decompile(key, type); }
-                catch (Exception ex) { return "// error: " + ex.getMessage(); }
-            }
-            @Override protected void done() {
-                try {
-                    String text = get();
-                    setCode(text, type);
-                    status.setText("Done");
-                } catch (Exception ex) {
-                    setCode("// error: " + ex.getMessage(), type);
-                    status.setText("Failed");
-                }
-            }
-        }.execute();
+
+        if (node.isLeaf() && !(uo instanceof ClassEntry)) {
+            String entryName = buildEntryName(node); // reconstruct jar path
+            openResourceEditor(entryName);
+        }
     }
 
-    private void setCode(String s, Decompilers.Type t) {
-        try {
-            StyledDocument doc = code.getDocument() instanceof StyledDocument sd ? sd : new DefaultStyledDocument();
-            if (doc.getLength()>0) doc.remove(0, doc.getLength());
-            doc.insertString(0, s, null);
-            code.setDocument(doc);
-            SyntaxHighlighter.apply(doc, t);
-            SearchHighlighter.highlight(code, search.getText());
-        } catch (Exception ignored) {}
+    private String buildEntryName(DefaultMutableTreeNode node) {
+        TreeNode[] path = node.getPath();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i < path.length; i++) {
+            if (sb.length() > 0) sb.append('/');
+            sb.append(path[i].toString());
+        }
+        return sb.toString();
     }
 
-    private void saveCurrent() {
-        if (current == null) { status.setText("Nothing selected"); return; }
-        edits.put(current.classPath(), code.getText());
-        status.setText("Saved: " + current.simpleName());
+    private void openClassEditor(ClassEntry ce) {
+        String key = ce.classPath();
+        EditorTab et = openClassEditors.get(key);
+        if (et == null) {
+            et = new EditorTab(ce);
+            openClassEditors.put(key, et);
+            editorTabs.addTab(ce.simpleName(), et);
+        }
+        editorTabs.setSelectedComponent(et);
+        et.refreshSource();
+    }
+
+    private void openResourceEditor(String entryName) {
+        ResourceTab rt = openResourceEditors.get(entryName);
+        if (rt == null) {
+            String display = entryName.substring(entryName.lastIndexOf('/')+1);
+            rt = new ResourceTab(entryName, readEntryText(entryName));
+            openResourceEditors.put(entryName, rt);
+            editorTabs.addTab(display.isEmpty() ? entryName : display, rt);
+        }
+        editorTabs.setSelectedComponent(rt);
+    }
+
+    private String readEntryText(String entryName) {
+        if (jar == null) return "";
+        try (JarFile jf = new JarFile(jar)) {
+            JarEntry e = jf.getJarEntry(entryName);
+            if (e == null) return "";
+            try (InputStream is = jf.getInputStream(e)) {
+                byte[] b = is.readAllBytes();
+                return new String(b, StandardCharsets.UTF_8);
+            }
+        } catch (Exception ex) {
+            return "// error reading entry: " + ex.getMessage();
+        }
+    }
+
+    private interface SearchableTab { int highlightSearch(String q); }
+
+    private SearchableTab getActiveSearchable() {
+        Component c = editorTabs.getSelectedComponent();
+        if (c instanceof SearchableTab s) return s;
+        return null;
+    }
+
+    private void saveAll() {
+        for (var rt : openResourceEditors.values()) {
+            String entry = resolveRename(rt.entryName);
+            modifiedBytes.put(entry, rt.getText().getBytes(StandardCharsets.UTF_8));
+        }
+
+        status.setText("Saved " + modifiedBytes.size() + " resource edits.");
+    }
+
+    private String resolveRename(String oldName) {
+        return renames.getOrDefault(oldName, oldName);
     }
 
     private void exportJar() {
@@ -293,26 +295,168 @@ public class DecompilerFrame extends JFrame {
         fc.setDialogTitle("Export JAR");
         fc.setSelectedFile(new File(jar.getName().replace(".jar", "_modified.jar")));
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+
         File out = fc.getSelectedFile().getName().toLowerCase().endsWith(".jar")
                 ? fc.getSelectedFile()
                 : new File(fc.getSelectedFile().getAbsolutePath() + ".jar");
+
         if (out.exists()) {
             int r = JOptionPane.showConfirmDialog(this, "Overwrite " + out.getName() + "?", "Confirm", JOptionPane.YES_NO_OPTION);
             if (r != JOptionPane.YES_OPTION) return;
         }
-        new SwingWorker<Void,Void>() {
-            @Override protected Void doInBackground() {
-                status.setText("Exporting...");
-                try {
-                    new Loader().exportJar(jar, out, edits);
-                    status.setText("Exported: " + out.getName());
-                    JOptionPane.showMessageDialog(DecompilerFrame.this, "Exported to:\n" + out.getAbsolutePath());
-                } catch (Exception ex) {
-                    status.setText("Export failed");
-                    JOptionPane.showMessageDialog(DecompilerFrame.this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-                }
-                return null;
+
+        try {
+            Map<String, byte[]> toWrite = new HashMap<>();
+            for (var e : modifiedBytes.entrySet()) {
+                toWrite.put(resolveRename(e.getKey()), e.getValue());
             }
-        }.execute();
+            new Loader().exportJar(jar, out, toWrite);
+            status.setText("Exported: " + out.getName());
+            JOptionPane.showMessageDialog(this, "Exported to:\n" + out.getAbsolutePath());
+        } catch (Exception ex) {
+            status.setText("Export failed");
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void attachTreePopup() {
+        JPopupMenu popup = new JPopupMenu();
+        JMenuItem rename = new JMenuItem("Rename…");
+        popup.add(rename);
+        
+
+        rename.addActionListener(e -> {
+            TreePath tp = tree.getSelectionPath();
+            if (tp == null) return;
+            DefaultMutableTreeNode node = (DefaultMutableTreeNode) tp.getLastPathComponent();
+            if (!node.isLeaf()) { JOptionPane.showMessageDialog(this, "Pick a file to rename."); return; }
+            String oldEntry = (node.getUserObject() instanceof ClassEntry ce) ? ce.classPath() : buildEntryName(node);
+            String baseName = oldEntry.substring(oldEntry.lastIndexOf('/')+1);
+            String newName = JOptionPane.showInputDialog(this, "New name", baseName);
+            if (newName == null || newName.isBlank()) return;
+
+            String newEntry = oldEntry.contains("/") ? oldEntry.substring(0, oldEntry.lastIndexOf('/')+1) + newName : newName;
+            renames.put(oldEntry, newEntry);
+            node.setUserObject(newName);
+            model.nodeChanged(node);
+            status.setText("Renamed: " + oldEntry + " → " + newName);
+        });
+
+        tree.setComponentPopupMenu(popup);
+    }
+
+    private final class EditorTab extends JPanel implements SearchableTab {
+        final ClassEntry classEntry;
+        private final JTabbedPane subTabs;
+        private final JTextPane sourcePane, asmPane;
+        private final JScrollPane sourceScroll, asmScroll;
+
+        EditorTab(ClassEntry ce) {
+            super(new BorderLayout());
+            this.classEntry = ce;
+
+            subTabs = new JTabbedPane();
+
+            sourcePane = new JTextPane(new DefaultStyledDocument());
+            sourcePane.setFont(new Font(Theme.editorFont(), Font.PLAIN, Theme.editorSize()));
+            sourceScroll = new JScrollPane(sourcePane);
+
+            asmPane = new JTextPane(new DefaultStyledDocument());
+            asmPane.setFont(new Font(Theme.editorFont(), Font.PLAIN, Theme.editorSize()));
+            asmPane.setEditable(true); // editable per your request
+            asmScroll = new JScrollPane(asmPane);
+
+            subTabs.addTab("Source", sourceScroll);
+            subTabs.addTab("Assembly Viewer", asmScroll);
+            add(subTabs, BorderLayout.CENTER);
+        }
+
+        void refreshSource() {
+            if (jar == null) return;
+            String key = classEntry.classPath();
+            Decompilers.Type t = (Decompilers.Type) decompPicker.getSelectedItem();
+
+            // Source
+            new SwingWorker<String,Void>() {
+                @Override protected String doInBackground() {
+                    try { return new Decompilers(jar).decompile(key, t); }
+                    catch (Exception ex) { return "// error: " + ex.getMessage(); }
+                }
+                @Override protected void done() {
+                    try { setSourceText(get()); status.setText("Done: " + classEntry.simpleName()); }
+                    catch (Exception ignored) {}
+                }
+            }.execute();
+
+            // ASM
+            new SwingWorker<String,Void>() {
+                @Override protected String doInBackground() {
+                    return new Decompilers(jar).asmText(key);
+                }
+                @Override protected void done() {
+                    try { setAsmText(get()); } catch (Exception ignored) {}
+                }
+            }.execute();
+        }
+
+        String getSourceText() { return sourcePane.getText(); }
+        String getAsmText()    { return asmPane.getText(); }
+
+        void setSourceText(String s) {
+            try {
+                StyledDocument doc = new DefaultStyledDocument();
+                doc.insertString(0, s != null ? s : "", null);
+                sourcePane.setDocument(doc);
+                SyntaxHighlighter.applyJava(doc);
+            } catch (Exception ignored) {}
+        }
+
+        void setAsmText(String s) {
+            try {
+                StyledDocument doc = new DefaultStyledDocument();
+                doc.insertString(0, s != null ? s : "", null);
+                asmPane.setDocument(doc);
+                SyntaxHighlighter.applyAsm(doc);
+            } catch (Exception ignored) {}
+        }
+
+        @Override public int highlightSearch(String query) {
+            if (query == null) query = "";
+            Component active = subTabs.getSelectedComponent();
+            if (active == sourceScroll) {
+                return SearchHighlighter.highlight(sourcePane, query);
+            } else {
+                return SearchHighlighter.highlight(asmPane, query);
+            }
+        }
+    }
+
+    private final class ResourceTab extends JPanel implements SearchableTab {
+        final String entryName;
+        final JTextPane textPane;
+
+        ResourceTab(String entryName, String text) {
+            super(new BorderLayout());
+            this.entryName = entryName;
+            this.textPane = new JTextPane(new DefaultStyledDocument());
+            try { this.textPane.getDocument().insertString(0, text != null ? text : "", null); } catch(Exception ignored){}
+            this.textPane.setFont(new Font(Theme.editorFont(), Font.PLAIN, Theme.editorSize()));
+            add(new JScrollPane(textPane), BorderLayout.CENTER);
+        }
+
+        String getText() { return textPane.getText(); }
+
+        @Override public int highlightSearch(String query) {
+            return SearchHighlighter.highlight(textPane, query == null ? "" : query);
+        }
+    }
+
+    private JButton button(String text, java.awt.event.ActionListener a) {
+        JButton b = new JButton(text); b.addActionListener(a); return b;
+    }
+
+    private void refreshActive() {
+        Component c = editorTabs.getSelectedComponent();
+        if (c instanceof EditorTab et) et.refreshSource();
     }
 }
