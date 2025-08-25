@@ -1,6 +1,6 @@
 package com.reverse;
 
-import com.formdev.flatlaf.FlatLightLaf;
+import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import com.reverse.settings.Theme;
 
 import javax.swing.*;
@@ -8,7 +8,7 @@ import javax.swing.*;
 public class App {
     public static void main(String[] args) {
         try {
-            FlatLightLaf.setup();
+            FlatMacDarkLaf.setup();
             UIManager.put("Component.arc", 14);   // rounded
             UIManager.put("Button.arc", 18);
             UIManager.put("TextComponent.arc", 12);
@@ -18,7 +18,7 @@ public class App {
 
         SwingUtilities.invokeLater(() -> {
             Theme.init();
-            new com.reverse.gui.DecompilerFrame().setVisible(true);
+            new com.reverse.ui.DecompilerFrame().setVisible(true);
         });
     }
 }
