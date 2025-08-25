@@ -1,4 +1,4 @@
-package com.reverse.gui;
+package com.reverse.ui;
 
 import javax.swing.*;
 import javax.swing.text.*;
