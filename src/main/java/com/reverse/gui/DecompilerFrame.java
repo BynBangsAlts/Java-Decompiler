@@ -363,7 +363,7 @@ public class DecompilerFrame extends JFrame {
 
             asmPane = new JTextPane(new DefaultStyledDocument());
             asmPane.setFont(new Font(Theme.editorFont(), Font.PLAIN, Theme.editorSize()));
-            asmPane.setEditable(true); // editable per your request
+            asmPane.setEditable(true); 
             asmScroll = new JScrollPane(asmPane);
 
             subTabs.addTab("Source", sourceScroll);
