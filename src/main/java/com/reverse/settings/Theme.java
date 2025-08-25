@@ -1,7 +1,7 @@
 package com.reverse.settings;
 
-import com.formdev.flatlaf.FlatDarkLaf;
-import com.formdev.flatlaf.FlatLightLaf;
+import com.formdev.flatlaf.themes.FlatMacDarkLaf;
+import com.formdev.flatlaf.themes.FlatMacLightLaf;
 
 import javax.swing.*;
 import java.awt.*;
@@ -45,16 +45,16 @@ public final class Theme {
     private static void applyMode(Mode m) {
         try {
             if (m == Mode.SYSTEM) {
-                UIManager.setLookAndFeel(new FlatLightLaf());
+                UIManager.setLookAndFeel(new FlatMacLightLaf());
             } else if (m == Mode.DARK) {
-                UIManager.setLookAndFeel(new FlatDarkLaf());
+                UIManager.setLookAndFeel(new FlatMacDarkLaf());
             } else {
-                UIManager.setLookAndFeel(new FlatLightLaf());
+                UIManager.setLookAndFeel(new FlatMacLightLaf());
             }
         } catch (Exception ignored) {}
     }
 
-    public static boolean isDark() { return UIManager.getLookAndFeel() instanceof FlatDarkLaf; }
+    public static boolean isDark() { return UIManager.getLookAndFeel() instanceof FlatMacDarkLaf; }
 
     public static void refreshAll() {
         for (Frame f : Frame.getFrames()) {
