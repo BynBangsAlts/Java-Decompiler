@@ -11,6 +11,7 @@ import com.strobel.decompiler.DecompilerSettings;
 import com.strobel.decompiler.PlainTextOutput;
 
 import java.io.*;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -116,12 +117,17 @@ public class Decompilers {
         String typeName = classPath.replace('/', '.')
                 .replace('\\', '.')
                 .replaceAll("\\.class$", "");
-        DecompilerSettings settings = DecompilerSettings.javaDefaults();
-        settings.setTypeLoader(new DirTypeLoader(rootDir));
 
-        StringWriter sw = new StringWriter();
-        Decompiler.decompile(typeName, new PlainTextOutput(sw), settings);
-        return sw.toString();
+        java.net.URL[] urls = {rootDir.toURI().toURL()};
+        try (java.net.URLClassLoader isolated = new java.net.URLClassLoader(urls, null)) {
+            DecompilerSettings settings = DecompilerSettings.javaDefaults();
+            settings.setTypeLoader(new IsolatedTypeLoader(isolated));
+
+            StringWriter sw = new StringWriter();
+            PlainTextOutput out = new PlainTextOutput(sw);
+            Decompiler.decompile(typeName, out, settings);
+            return sw.toString();
+        }
     }
 
     private String cfr(File classFile) {
@@ -137,23 +143,25 @@ public class Decompilers {
         return baos.toString(StandardCharsets.UTF_8);
     }
 
+    static final class IsolatedTypeLoader implements ITypeLoader {
 
+        private final URLClassLoader cl;
 
-    private static final class DirTypeLoader implements ITypeLoader {
-        private final File root;
-        DirTypeLoader(File root) { this.root = root; }
+        IsolatedTypeLoader(URLClassLoader cl) {
+            this.cl = cl;
+        }
+
         @Override
         public boolean tryLoadType(String internalName, Buffer buffer) {
-            String path = internalName.endsWith(".class") ? internalName : internalName + ".class";
-            File f = new File(root, path);
-            if (!f.isFile()) return false;
-            try (InputStream in = new FileInputStream(f)) {
-                byte[] data = in.readAllBytes();
-                buffer.reset(data.length);
-                buffer.putByteArray(data, 0, data.length);
+            String resource = internalName.replace('.', '/') + ".class";
+            try (InputStream in = cl.getResourceAsStream(resource)) {
+                if (in == null) return false;
+                byte[] b = in.readAllBytes();
+                buffer.reset(b.length);
+                buffer.putByteArray(b, 0, b.length);
                 buffer.position(0);
                 return true;
-            } catch (IOException e) {
+            } catch (IOException ignored) {
                 return false;
             }
         }
